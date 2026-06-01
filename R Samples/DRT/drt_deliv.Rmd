@@ -1,0 +1,474 @@
+---
+title: "DART (Developmental and Reproductive Toxicology) analysis"
+author: "Maddy Santoso"
+date: "2025-07-21"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pck, echo=FALSE, warning=FALSE, message = FALSE}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(FSA)
+library(car)
+library(multcompView)
+library(Matrix)
+library(lme4)
+library(corrr)
+library(kableExtra)
+
+```
+
+```{r file, echo=FALSE, warning=FALSE, message = FALSE}
+
+file = "" ## Data is proprietary and not included!!
+datm <- read_excel(file)
+nrow1 <- nrow(datm) # 33915 rows 
+datm <- datm[!is.na(datm$LOEL_KT),]
+nrow2 <- nrow(datm) # 2233 rows
+
+datm$NOEL_KT <- as.numeric(datm$NOEL_KT)
+datm$LOEL_KT <- as.numeric(datm$LOEL_KT)
+
+datm$admin_method <- str_replace(datm$admin_method, "exposure chambers developed at pacific northwest laboratories and now sold by the hartford system division of lab products, inc. aberdeen, md", "PNL exposure chambers")
+
+datm$chemical_name <- factor(datm$chemical_name)
+datm$effect_group <- factor(datm$effect_group)
+datm$strain <- factor(datm$strain)
+datm$species <- factor(datm$species)
+datm$admin_route <- factor(datm$admin_route)
+datm$admin_method <- factor(datm$admin_method)
+datm$dosing_duration <- as.numeric(datm$dosing_duration)
+datm$treatment_days <- as.numeric(datm$treatment_days)
+datm$dosing_duration <- factor(datm$dosing_duration)
+datm$diet_information <- factor(datm$diet_information)
+
+```
+
+```{r summary1, echo=FALSE}
+# split df by maternal & litter/pups 
+dmat <- datm %>% 
+  filter(effect_group =="Dam")
+dfet <- datm %>%
+  filter(effect_group %in% c("Fetus", "Litter"))
+
+# split dfs by unit and dam/fetus
+# dperc <- dmat %>%
+#   filter(LOEL_unit=="%")
+# dmg <- dmat %>%
+#   filter(LOEL_unit=="mg/kg/day")
+# dppm <- dmat %>%
+#   filter(LOEL_unit=="ppm")
+# 
+# fperc <- dfet %>%
+#   filter(LOEL_unit=="%")
+# fmg <- dfet %>%
+#   filter(LOEL_unit == "mg/kg/day")
+# fppm <- dfet %>%
+#   filter(LOEL_unit =="ppm")
+
+# split dfs by just unit 
+# loel_perc <- datm %>%
+#   filter(LOEL_unit == "%")
+# loel_mg <- datm %>%
+#   filter(LOEL_unit =="mg/kg/day")
+# loel_ppm <- datm %>%
+#   filter(LOEL_unit == "ppm")
+```
+
+```{r agreement, echo=False} 
+# how often do LOELs agree within a study-chemical combo? 
+loel_agreement <- datm %>% 
+  group_by(study_id.y, chemical_name) %>%
+  summarise(
+    n_rows = n(), 
+    n_matching = sum(duplicated(LOEL_MS) | duplicated(LOEL_MS, fromLast = TRUE)), 
+    percentage = ifelse(n_rows > 1, round((n_matching / n_rows)*100, 1), NA_real_),
+    .groups = "drop"
+  ) %>%
+  filter(n_rows>1) %>%
+  arrange(desc(chemical_name)) # 101 combos
+loel_agreement
+
+# % of combos with 100% agreement
+total_combos <- nrow(loel_agreement)
+n_100 <- loel_agreement %>% 
+  filter(percentage==100) %>%
+  nrow() 
+round((n_100 / total_combos)*100,1) #59.4% chem-study combos agree 
+
+```
+
+``` {r analysis, echo=FALSE}
+# why do these LOELs agree? 
+datm100 <- datm %>%
+  inner_join(
+    loel_agreement %>% filter(percentage==100), 
+    by=c("study_id.y", "chemical_name")
+  ) %>%
+  select(chemical_name, study_id.y, LOEL_MS, LOEL_unit, species, strain, admin_route, admin_method,diet_information, dosing_duration, duration_unit)
+
+# see consistency in study design for each chemical 
+design_sim <- datm100 %>%
+  group_by(chemical_name, study_id.y) %>%
+  summarise( 
+    n_studies = n_distinct(study_id.y), 
+    n_rows = n(),
+    s_species = n_distinct(species)==1,
+    s_strain = n_distinct(strain) ==1,
+    s_adminroute = n_distinct(admin_route)==1, 
+    s_adminmethod = n_distinct(admin_method)==1 , 
+    s_dietinfo = n_distinct(diet_information)==1, 
+    s_dosingdur = n_distinct(dosing_duration)==1,
+    .groups="drop"
+    )
+design_sim
+
+#how many of these chemicals have matching designs? 
+design_sim_summ <- design_sim %>%
+  summarise( 
+    p_species = mean(s_species)*100,
+    n_species = sum(s_species),
+    p_strain = mean(s_strain)*100,
+    n_strain = sum(s_strain),
+    p_adminroute = mean(s_adminroute)*100,
+    n_adminroute = sum(s_adminroute), 
+    p_adminmethod = mean(s_adminmethod)*100, 
+    n_adminmethod = sum(s_adminmethod), 
+    p_diet = mean(s_dietinfo)*100,
+    n_diet = sum(s_dietinfo))
+design_sim_summ
+
+design_sim_p <- design_sim_summ %>% pivot_longer(cols=everything(), names_to = c(".value", "factor"), names_pattern = "([pn])_(.*)")
+design_sim_p
+ggplot(design_sim_p, aes(x=reorder(factor, p), y=p)) + 
+  geom_col(fill="skyblue") + 
+  geom_text(aes(label=paste0("n= ", n)),
+            hjust=0.5, size=3.5) +
+  coord_flip() +
+  labs(title="study design similarity, 100% agreement combos",
+       x="study designs",
+       y="% matching") +
+  theme_minimal()
+
+
+```
+
+```{r less than 50 agreement, echo=FALSE} 
+# see consistency of study design for chems that have <=70 agreement
+datm50 <- datm %>%
+  inner_join(
+    loel_agreement %>% filter(percentage <= 70), 
+    by=c("study_id.y", "chemical_name")
+  ) %>%
+  select(chemical_name, study_id.y, LOEL_MS, LOEL_unit, species, strain, admin_route, admin_method,diet_information, dosing_duration, duration_unit)
+datm50
+
+# see consistency in study design for each chemical 
+design_sim2 <- datm50 %>%
+  group_by(chemical_name, study_id.y) %>%
+  summarise( 
+    n_studies = n_distinct(study_id.y), 
+    n_rows = n(),
+    s_species = n_distinct(species)==1,
+    s_strain = n_distinct(strain) ==1,
+    s_adminroute = n_distinct(admin_route)==1, 
+    s_adminmethod = n_distinct(admin_method)==1 , 
+    s_dietinfo = n_distinct(diet_information)==1, 
+    s_dosingdur = n_distinct(dosing_duration)==1,
+    .groups="drop"
+    )
+datm50
+#how many of these chemicals have matching designs? 
+design_sim_summ2 <- design_sim2 %>%
+  summarise( 
+    p_species = mean(s_species)*100,
+    n_species = sum(s_species),
+    p_strain = mean(s_strain)*100,
+    n_strain = sum(s_strain),
+    p_adminroute = mean(s_adminroute)*100,
+    n_adminroute = sum(s_adminroute), 
+    p_adminmethod = mean(s_adminmethod)*100, 
+    n_adminmethod = sum(s_adminmethod), 
+    p_diet = mean(s_dietinfo)*100,
+    n_diet = sum(s_dietinfo))
+design_sim_summ2
+
+design_sim_p2 <- design_sim_summ2 %>% pivot_longer(cols=everything(), names_to = c(".value", "factor"), names_pattern = "([pn])_(.*)")
+design_sim_p2
+ggplot(design_sim_p2, aes(x=reorder(factor, p), y=p)) + 
+  geom_col(fill="skyblue") + 
+  geom_text(aes(label=paste0("n= ", n)),
+            hjust=0.5, size=3.5) +
+  coord_flip() +
+  labs(title="study design similarity, 70% agreement combos",
+       x="study designs",
+       y="% matching") +
+  theme_minimal()
+#so.. looks like even the ones with <70% agreement has consistent study designs
+```
+
+``` {r most sensitive, echo=FALSE} 
+# Most sensitive within study-chemical combo
+most_sensitive_studies <- datm %>%
+  group_by(study_id.y, chemical_name) %>%
+  summarise(
+            min_loel=min(LOEL_MS, na.rm=TRUE), 
+            Unit= first(LOEL_unit),
+            num_rows = sum(LOEL_MS == min(LOEL_MS, na.rm = TRUE), na.rm = TRUE),
+            .groups="drop") %>%
+  filter(num_rows > 2) %>% # filter n>2
+  arrange(chemical_name)
+most_sensitive_studies
+
+most_sensitive_dt <- datm %>% 
+  inner_join(most_sensitive_studies, by=c("study_id.y", "chemical_name")) %>%
+  filter(LOEL_MS==min_loel)
+nrow(most_sensitive_dt)
+
+most_sensitive_dt %>%
+  group_by(chemical_name) %>%
+  summarise(
+    unique_studies = n_distinct(study_id.y)
+  ) %>%
+  arrange(desc(unique_studies))
+
+# each chem has multiple unique studies
+# pull out most sensitive within a study, and compare across chems metadata
+# compare within studies
+most_sensitive_dt %>% 
+  count(study_id.y, admin_route) %>%
+  group_by(study_id.y) %>%
+  mutate(prop=(n/sum(n))*100) %>%
+  ungroup()
+
+most_sensitive_dt %>% 
+  count(study_id.y, species) %>%
+  group_by(study_id.y) %>%
+  mutate(prop=(n/sum(n))*100) %>%
+  ungroup()
+
+most_sensitive_dt %>% 
+  count(study_id.y, gender) %>%
+  group_by(study_id.y) %>%
+  mutate(prop=(n/sum(n))*100) %>%
+  ungroup()
+
+most_sensitive_dt %>% 
+  count(study_id.y, admin_method) %>%
+  group_by(study_id.y) %>%
+  mutate(prop=(n/sum(n))*100) %>%
+  ungroup()
+
+most_sensitive_dt %>% 
+  count(study_id.y, diet_information) %>%
+  group_by(study_id.y) %>%
+  mutate(prop=(n/sum(n))*100) %>%
+  ungroup()
+
+most_sensitive_dt %>% 
+  ggplot(aes(x=treatment_days, y=LOEL_MS)) + 
+           geom_boxplot() + 
+           facet_wrap(~admin_route)
+              
+```
+
+```{r comparisons, echo=FALSE}
+# prop of the entire thing? 
+# see what kinda metadata show up most in the entire data set vs. in the most sensitive dt 
+# keep it at one row per chem-study combo, we don't want duplicates? 
+
+all_studies <- datm %>%
+    distinct(chemical_name, study_id.y, .keep_all = TRUE)
+all_studies
+nrow(all_studies)
+comparison <- function(datm, most_sensitive_dt, endpoint) {
+  all_studies <- datm %>%
+    distinct(chemical_name, study_id.y, .keep_all = TRUE)
+  
+  most_sensitive_dt <- most_sensitive_dt %>%
+    distinct(chemical_name, study_id.y, .keep_all=TRUE)
+  print(nrow(most_sensitive_dt))
+  
+  route_s <- most_sensitive_dt %>%
+    count({{endpoint}}, name = "n_sensitive") %>%
+    mutate(prop_sensitive = n_sensitive / sum(n_sensitive))
+  
+  route_a <- all_studies %>%
+    count({{endpoint}}, name = "n_all") %>%
+    mutate(prop_all = n_all / sum(n_all))
+  
+  route_c <- left_join(route_s, route_a, by = rlang::as_name(rlang::enquo(endpoint))) %>%
+    mutate(diff = prop_sensitive / prop_all)
+
+  route_p <- route_c %>%
+    select({{endpoint}}, prop_sensitive, prop_all) %>%
+    pivot_longer(
+      cols = c(prop_sensitive, prop_all),
+      names_to = "group",
+      values_to = "proportion"
+    )
+
+  p <- ggplot(route_p, aes(x = {{endpoint}}, y = proportion, fill = group)) +
+    geom_col(position = "dodge") +
+    labs(title = paste0(rlang::as_name(rlang::enquo(endpoint)), " - Most Sensitive vs. All Studies"), 
+         x = rlang::as_name(rlang::enquo(endpoint)), 
+         y = "Proportion") +
+    scale_fill_manual(values = c(
+      "prop_sensitive" = "darkred",
+      "prop_all" = "gray"
+    )) +
+    theme_minimal()
+  
+  return(list(p, route_c))
+}
+comparison(datm, most_sensitive_dt, species)
+
+
+
+```
+
+
+```{r dose analysis, echo=FALSE}
+dose_cols <- paste0("dose_", 2:10)
+
+# dose 1 is always 0, might be the control. so start at dose 2? 
+# or should we include dose 0? 
+dose_dt <- datm %>%
+  rowwise() %>%
+  mutate(
+    dose_v = list(na.omit(as.numeric(c_across(all_of(dose_cols))))), 
+    n_dose = length(dose_v),
+    min_dose = as.numeric(min(dose_v, na.rm=TRUE)),
+    max_dose = as.numeric(max(dose_v, na.rm=TRUE)),
+    dose_range = max_dose-min_dose, 
+    dose_diff = list(diff(dose_v)),
+    avg_diff = ifelse(n_dose>1, mean(dose_diff), NA)
+  ) %>%
+  select(casrn, index, chemical_name, study_id.y, gender, species, strain, admin_route, admin_method, diet_information, treatment_days,
+         dose_v, n_dose, min_dose, max_dose, dose_range, avg_diff, LOEL_MS, LOEL_unit) %>%
+  ungroup()
+dose_dt
+
+agree_100 <- loel_agreement %>%
+  filter(percentage == 100) 
+agree_70 <- loel_agreement %>% 
+  filter(percentage>= 70)
+
+datm100 <- dose_dt %>%
+  semi_join(agree_100, by = c("chemical_name", "study_id.y")) %>% 
+  select(casrn, index, chemical_name, study_id.y, gender, species, strain, admin_route, admin_method, diet_information, treatment_days,
+         dose_v, n_dose, min_dose, max_dose, dose_range, avg_diff, LOEL_MS, LOEL_unit)
+datm70 <- dose_dt %>%
+  semi_join(agree_70, by = c("chemical_name", "study_id.y")) %>% 
+  select(casrn, index, chemical_name, study_id.y, gender, species, strain, admin_route, admin_method, diet_information, treatment_days,
+         dose_v, n_dose, min_dose, max_dose, dose_range, avg_diff, LOEL_MS, LOEL_unit)
+
+# see consistency in study design for each chemical 
+design_sim <- datm100 %>%
+  group_by(chemical_name, study_id.y) %>%
+  summarise( 
+    n_dose = n_distinct(n_dose)==1,
+    .groups="drop"
+    )
+design_sim2 <- datm70 %>%
+  group_by(chemical_name, study_id.y) %>%
+  summarise( 
+    n_dose = n_distinct(n_dose)==1,
+    .groups="drop"
+    )
+
+#how many of these chemicals have matching designs? 
+design_sim_summ <- design_sim %>%
+  summarise( 
+    p_dose = mean(n_dose)*100)
+design_sim_summ2 <- design_sim2 %>%
+  summarise( 
+    p_dose = mean(n_dose)*100)
+design_sim_summ2
+# comparing average spacing in matching design studies vs. not
+spacing_summ <- datm100 %>%
+  summarise(
+    mean_spacing = mean(avg_diff, na.rm=TRUE),
+    median_spacing = median(avg_diff, na.rm=TRUE), 
+    n=n()
+  )
+spacing_summ
+spacing_summ2 <- datm70 %>%
+  summarise(
+    mean_spacing = mean(avg_diff, na.rm=TRUE),
+    median_spacing = median(avg_diff, na.rm=TRUE), 
+    n=n()
+  )
+spacing_summ2
+```
+
+```{r dose v most sensitive, echo=FALSE}
+dose_sensitive <- most_sensitive_dt %>%
+  rowwise() %>%
+  mutate(
+    dose_v = list(na.omit(as.numeric(c_across(all_of(dose_cols))))), 
+    n_dose = length(dose_v),
+    min_dose = as.numeric(min(dose_v, na.rm=TRUE)),
+    max_dose = as.numeric(max(dose_v, na.rm=TRUE)),
+    dose_range = max_dose-min_dose, 
+    dose_diff = list(diff(dose_v)),
+    avg_diff = ifelse(n_dose>1, mean(dose_diff), NA)
+  ) %>%
+  select(casrn, index, chemical_name, study_id.y, gender, species, strain, admin_route, admin_method, diet_information, treatment_days,
+         dose_v, n_dose, min_dose, max_dose, dose_range, avg_diff, LOEL_MS, LOEL_unit) %>%
+  ungroup()
+
+dose_all <- dose_dt %>%
+    distinct(chemical_name, study_id.y, .keep_all = TRUE)
+
+dose_sensitive_s <- dose_sensitive %>% 
+  summarise( 
+    n=n(),
+    mean_n = mean(n_dose, na.rm=TRUE),
+    mean_avg_diff = mean(avg_diff, na.rm=TRUE), 
+    mean_min_dose=mean(min_dose, na.rm=TRUE),
+    mean_max_dose=mean(max_dose, na.rm=TRUE),
+    lowest_dose = min(min_dose, na.rm=TRUE)
+    )
+
+dose_all_s <- dose_all %>%
+  summarise( 
+    n=n(),
+    mean_n=mean(n_dose, na.rm=TRUE),
+    mean_avg_diff = mean(avg_diff, na.rm=TRUE), 
+    mean_min_dose=mean(min_dose, na.rm=TRUE),
+    mean_max_dose=mean(max_dose, na.rm=TRUE),
+    lowest_dose = min(min_dose, na.rm=TRUE))
+
+dose_comparisons <- bind_rows( 
+  dose_all = dose_all_s,
+  most_sensitive = dose_sensitive_s, 
+  .id="group")
+
+dose_comparisons
+
+# scatter plot 
+# tag most sensitive in dose_dt 
+dose_dt <- dose_dt %>%
+  mutate(is_most_sensitive = if_else(
+    paste(chemical_name, study_id.y) %in%
+      paste(most_sensitive_studies$chemical_name, most_sensitive_studies$study_id.y), 
+    1, 0))
+ggplot(dose_dt, aes(x=min_dose, y=LOEL_MS, color=factor(is_most_sensitive)))+
+  geom_point(alpha=0.6) +
+  scale_x_log10(labels=scales::comma) + scale_y_log10(labels=scales::comma) +
+  labs(title="min dose vs. LOEL per study (log scale)", 
+       x="Lowest Dose", 
+       y="LOEL",
+       color="Most Sensitive")
+```
+
