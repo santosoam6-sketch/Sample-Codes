@@ -6,12 +6,12 @@ Statistical programming samples demonstrating R and SAS skills in preclinical an
 
 ## R Samples
 
-### [`Table_Listings_Figures/`](R%20Samples/Table_Listings_Figures/)
+### [`TLF Generation/`](R%20Samples/TLF%20Generation/)
 Clinical adverse event TLF generation using CDISC ADaM data (pharmaverse).
 - TEAE summary table (SOC/PT hierarchy, n(%) by arm) rendered as publication-ready HTML via `{gt}`
 - AE severity distribution bar chart and top-10 AE incidence forest plot with 95% Wilson CIs via `{ggplot2}`
 
-### [`DRT/`](R%20Samples/DRT/)
+### [`DART Analysis/`](R%20Samples/DART%20Analysis/)
 Developmental and Reproductive Toxicology (DART) analysis in R Markdown.
 - LOEL/NOEL agreement analysis across study-chemical combinations
 - Study design similarity comparisons (species, strain, route, method)
@@ -21,7 +21,7 @@ Developmental and Reproductive Toxicology (DART) analysis in R Markdown.
 
 ## SAS Samples
 
-### [`Cochran Armitage/`](SAS%20Samples/Cochran%20Armitage/)
+### [`Cochran Armitage Program/`](SAS%20Samples/Cochran%20Armitage%20Program/)
 Macro-driven Cochran-Armitage trend test with one- and two-sided options.
 - Parameterized `%analyze` macro handles direction (`U`, `L`, `2`) and extracts Z-statistic and p-values by name from ODS output
 - Verified against published reference data (Shirley/Williams 1980)
